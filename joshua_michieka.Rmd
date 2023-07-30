@@ -1,0 +1,237 @@
+---
+title: "deworm_prophet_time_series"
+output: html_document
+date: "2023-07-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+rm(list = ls())
+```
+
+
+```{r}
+#import data
+df <- read.csv2("cema_internship_task_2023.csv", header=TRUE, sep = ",")
+#view the first 3 rows
+head(df,3)
+```
+
+
+```{r}
+#structure of the dataset
+str(df)
+
+```
+
+
+```{r}
+#view number of rows and columns
+dim(df)
+```
+```{r}
+#summary of the dataset to get an overview
+summary(df) #we notice there are nulls
+```
+
+
+```{r}
+#categorize null counts per column
+nulls <- colSums(is.na(df))
+nulls
+```
+```{r}
+#deal with the nulls
+#Assuming the nulls are as a result of no finding you can replace it with 0
+df$Acute.Malnutrition <- replace(df$Acute.Malnutrition, is.na(df$Acute.Malnutrition),0)
+df$stunted.6.23.months <- replace(df$stunted.6.23.months, is.na(df$stunted.6.23.months),0)
+df$stunted.0..6.months <- replace(df$stunted.0..6.months, is.na(df$stunted.0..6.months),0)
+df$stunted.24.59.months <- replace(df$stunted.24.59.months , is.na(df$stunted.24.59.months ),0)
+summary(df)#no nulls on any column
+```
+
+
+```{r}
+#Find total number of children dewormed per county
+library(tidyverse)
+diahrrea_per_county <- df%>%
+  group_by(county)%>%
+  summarise(diahrrea_county_count = sum(diarrhoea.cases))%>%
+  arrange(desc(diahrrea_county_count))
+print(diahrrea_per_county)
+```
+
+
+```{r}
+#Deormed per county
+dewormed_per_county <- df%>%
+  group_by(county)%>%
+  summarise(dewormed_county_count = sum(Total.Dewormed))%>%
+  arrange(desc(dewormed_county_count))
+print(dewormed_per_county)
+```
+
+
+```{r}
+malnutrition_per_county <- df%>%
+  group_by(county)%>%
+  summarise(malnutrition_county_count = sum(Acute.Malnutrition))%>%
+  arrange(desc(malnutrition_county_count))
+print(malnutrition_per_county)
+```
+
+
+```{r}
+#datatype
+class(df$period)
+```
+
+
+```{r}
+#change period to date format
+library(lubridate)
+df$period <- parse_date_time(df$period, orders = "%b-%y") #convert period to a proper date format
+head(df$period)
+class(df$period)
+```
+
+
+```{r}
+#to as date
+df$period <- as.Date(df$period)
+head(df$period)
+class(df$period)
+```
+
+
+```{r}
+df$yr <- format(df$period, "%Y")
+```
+
+
+##  I HAVE DECIDED TO CHOOSE MY RESEARCH QUESTION TO BE:
+        #PREDICTING THE REMAINING ESTIMATED NUMBERS OF DEWORMINGS COUNTRYWIDE
+```{r}
+
+#use time series to see total dewormed per year
+#Time series
+ggplot(data = df, aes(x = period, y= Total.Dewormed, group = county, color = county ))+
+  geom_line()+
+  theme_minimal()
+```
+
+
+```{r}
+#separate years in total deworms
+deworm_per_yr <- df%>%
+  group_by(county, yr)%>%
+  summarise(Total_deworm_per_yr = sum(Total.Dewormed))
+print(deworm_per_yr)
+```
+
+
+```{r}
+#highest dewormings by county
+highest_deworms <- deworm_per_yr%>%
+  group_by(county)%>%
+  filter(Total_deworm_per_yr == max(Total_deworm_per_yr))
+print(highest_deworms)
+```
+
+
+```{r}
+#year with most occurences in Kenya
+yr_count <- table(highest_deworms$yr)
+most_frequent <- names(yr_count)[which.max(yr_count)]
+yr_count
+print(paste("Year with most dewormings done in Kenya:",most_frequent))
+```
+
+
+```{r}
+#year with most deworming done with total number in Kenya
+total_most_dewormig <- df%>%
+  group_by(yr)%>%
+  summarise(Total_deworm_per_yr = sum(Total.Dewormed))
+most_deworming_year <- total_most_dewormig%>%
+  filter(Total_deworm_per_yr == max(Total_deworm_per_yr))
+most_deworming_year
+```
+
+
+```{r}
+#let us try to predict deworming activities for the rest of the year viafacebook prophet
+#filter data up to the last month 
+
+library(prophet)
+library(tidyverse)
+
+
+end_date <-as.Date("2023-06-01")
+start_date <- end_date - months(6)
+```
+
+
+```{r}
+#since we are predicting for each month for the remaining part of the year
+df$year_month <- format(df$period, "%Y-%m-%d")
+
+past_6_months <- df%>%
+  filter(period >=start_date & period <= end_date)
+
+
+total_past_6_months <- past_6_months%>%
+  group_by(year_month)%>%
+  summarise(Total_dewormed = sum(Total.Dewormed))
+print(total_past_6_months)
+```
+```{r}
+#rename columns according to prophet time series
+prophet_data <- total_past_6_months%>%
+  rename(ds=year_month, y=Total_dewormed)
+print(prophet_data)
+
+prophet_data$ds <- as.Date(prophet_data$ds, format = "%Y-%m-%d")
+class(prophet_data$ds)
+```
+
+
+```{r}
+
+#fit the model
+prophet_model <- prophet(prophet_data)
+```
+
+
+```{r}
+#dataframe with July to Dec 2023 dates
+future_dates <- data.frame(ds = seq(as.Date("2023-07-01"), as.Date("2023-12-01"), by = "month"))
+predicted_numbers <- predict(prophet_model, future_dates)
+plot(prophet_model, predicted_numbers, main = "Predictions for the remainder of the year")
+```
+
+
+```{r}
+#show them per month. Countrywide
+predicted_numbers_monthly <- predicted_numbers%>%
+  group_by(ds)%>%
+  summarise(predicter_values = sum(yhat))
+print(predicted_numbers_monthly)
+```
+
+
+
+##This will help in the preparation for the acquisition of both required resources and manpower
+We can go ahead to find distributions across the counties for the remaining part of the year since we have both dataframes with deworming figures on each county and predicted figures.
+Thank you
+
+
+
+
+
+
+
+
+
